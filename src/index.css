@@ -24,6 +24,26 @@ body {
   box-sizing: border-box;
 }
 
+/* Tailwind v4's preflight resets buttons to `cursor: default`. Restoring the
+   pointer once here covers every control in the app — and every one added
+   later — without a utility class sprinkled on each call site. */
+button:not(:disabled),
+select:not(:disabled),
+summary,
+[role='button']:not([aria-disabled='true']),
+input[type='checkbox']:not(:disabled),
+input[type='file']:not(:disabled),
+label:has(> input[type='checkbox']:not(:disabled)) {
+  cursor: pointer;
+}
+
+button:disabled,
+select:disabled,
+input:disabled,
+[aria-disabled='true'] {
+  cursor: not-allowed;
+}
+
 @keyframes slidein {
   from {
     transform: translateX(24px);

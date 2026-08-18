@@ -22,6 +22,11 @@ export interface FieldDef {
   required?: boolean
   /** Sorts and filters as a number rather than a string. */
   numeric?: boolean
+  /**
+   * A countable quantity, so a fractional value is invalid. Measurements and
+   * percentages are `numeric` but not `integer` — 12.5 kg is a real weight.
+   */
+  integer?: boolean
 }
 
 // Every row carries all 60 fields; visibility is purely a display setting.

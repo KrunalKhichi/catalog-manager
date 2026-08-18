@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProductRecord } from '../types'
-import { EMPTY_FILTERS, type ColumnFilters } from '../store/useTableStore'
+import { hasActiveFilters, type Filters } from '../store/useTableStore'
 
 interface FilterResult {
   filteredRecords: ProductRecord[]
@@ -10,8 +10,8 @@ interface FilterResult {
 
 const DEBOUNCE_MS = 120
 
-function isNarrowed(query: string, filters: ColumnFilters): boolean {
-  return query.trim() !== '' || Object.keys(EMPTY_FILTERS).some((k) => filters[k as keyof ColumnFilters] !== '')
+function isNarrowed(query: string, filters: Filters): boolean {
+  return query.trim() !== '' || hasActiveFilters(filters)
 }
 
 /**
@@ -27,7 +27,7 @@ function isNarrowed(query: string, filters: ColumnFilters): boolean {
 export function useFilteredRecords(
   records: ProductRecord[],
   searchQuery: string,
-  filters: ColumnFilters,
+  filters: Filters,
 ): FilterResult {
   const workerRef = useRef<Worker | null>(null)
   const requestIdRef = useRef(0)

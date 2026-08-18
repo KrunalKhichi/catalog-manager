@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { FIELD_SCHEMA, COLUMN_PRIORITY, DEFAULT_VISIBLE } from '../../data/schema'
 import { useDismiss } from '../../hooks/useDismiss'
+import { ColumnsIcon } from '../common/icons'
+import { BUTTON } from '../common/ui'
 
 interface Props {
   visibleColumns: string[]
@@ -43,7 +45,7 @@ export function ColumnVisibilityPanel({ visibleColumns, onChange }: Props) {
       <button
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        className={BUTTON}
       >
         <ColumnsIcon />
         Columns
@@ -57,12 +59,14 @@ export function ColumnVisibilityPanel({ visibleColumns, onChange }: Props) {
           <div className="border-b border-slate-100 p-3">
             <div className="mb-2 flex items-center justify-between">
               <p className="text-xs font-medium text-slate-500">Column count</p>
-              <button
-                onClick={() => onChange(DEFAULT_VISIBLE)}
-                className="text-xs text-indigo-600 hover:text-indigo-800"
-              >
-                Reset
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => onChange([])} className="text-xs text-slate-500 hover:text-slate-800">
+                  Hide all
+                </button>
+                <button onClick={() => onChange(DEFAULT_VISIBLE)} className="text-xs text-indigo-600 hover:text-indigo-800">
+                  Reset
+                </button>
+              </div>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {PRESETS.map((p) => (
@@ -109,6 +113,11 @@ export function ColumnVisibilityPanel({ visibleColumns, onChange }: Props) {
             )}
           </div>
 
+          <p className="border-t border-slate-100 px-3 py-2 text-[11px] text-slate-400">
+            Actions is pinned to the right of the table and isn’t one of the {FIELD_SCHEMA.length} data columns, so it
+            can’t be hidden or reordered.
+          </p>
+
           {visibleColumns.length === 0 && (
             <p className="border-t border-slate-100 px-3 py-2 text-xs text-amber-600">
               Every column is hidden — the table has nothing to show.
@@ -117,15 +126,5 @@ export function ColumnVisibilityPanel({ visibleColumns, onChange }: Props) {
         </div>
       )}
     </div>
-  )
-}
-
-function ColumnsIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <line x1="9" y1="4" x2="9" y2="20" />
-      <line x1="15" y1="4" x2="15" y2="20" />
-    </svg>
   )
 }

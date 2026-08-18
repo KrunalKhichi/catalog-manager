@@ -8,11 +8,15 @@ interface Props {
   /** Existing record when editing; the minted id preview when creating. */
   record?: ProductRecord
   nextIdPreview?: string
+  /** sku → id across the catalogue, so a duplicate SKU is caught before it lands. */
+  skuIndex: Map<string, string>
   onClose: () => void
   onSubmit: (values: Omit<ProductRecord, 'id'>) => void
 }
 
 type FormValues = Record<string, string | boolean>
+
+const MAX_RATING = 5
 
 function toFormValue(field: FieldDef, value: unknown): string | boolean {
   if (field.type === 'boolean') return Boolean(value)
@@ -25,7 +29,7 @@ function toFormValue(field: FieldDef, value: unknown): string | boolean {
  * validation all come off the schema, so adding a 61st field needs no
  * change in this file.
  */
-export function RecordForm({ mode, record, nextIdPreview, onClose, onSubmit }: Props) {
+export function RecordForm({ mode, record, nextIdPreview, skuIndex, onClose, onSubmit }: Props) {
   const [coreFields, advancedFields] = useMemo(
     () => [FIELD_SCHEMA.filter((f) => f.core), FIELD_SCHEMA.filter((f) => !f.core)],
     [],
@@ -36,6 +40,7 @@ export function RecordForm({ mode, record, nextIdPreview, onClose, onSubmit }: P
   )
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
 
   useDismiss(onClose)
@@ -57,15 +62,26 @@ export function RecordForm({ mode, record, nextIdPreview, onClose, onSubmit }: P
       if (field.required && (v === '' || v === undefined || v === null)) {
         found[field.key] = `${field.label} is required`
       } else if (field.numeric && v !== '' && typeof v === 'string') {
-        if (!Number.isFinite(Number(v))) found[field.key] = `${field.label} must be a number`
-        else if (Number(v) < 0) found[field.key] = `${field.label} can't be negative`
+        const n = Number(v)
+        if (!Number.isFinite(n)) found[field.key] = `${field.label} must be a number`
+        else if (n < 0) found[field.key] = `${field.label} can't be negative`
+        else if (field.type === 'rating' && n > MAX_RATING) found[field.key] = `Rating can't be above ${MAX_RATING}`
+        else if (field.integer && !Number.isInteger(n)) found[field.key] = `${field.label} must be a whole number`
       }
     }
+
+    // A SKU that belongs to a different record would make two rows
+    // indistinguishable in search and in a CSV round trip.
+    const sku = typeof values.sku === 'string' ? values.sku.trim() : ''
+    const owner = sku === '' ? undefined : skuIndex.get(sku)
+    if (owner && owner !== record?.id) found.sku = `SKU ${sku} is already used by ${owner}`
+
     return found
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (submitting) return
     const found = validate()
     setErrors(found)
     if (Object.keys(found).length > 0) {
@@ -83,6 +99,7 @@ export function RecordForm({ mode, record, nextIdPreview, onClose, onSubmit }: P
       else if (field.numeric) next[field.key] = Number(raw)
       else next[field.key] = raw as string
     }
+    setSubmitting(true)
     onSubmit(next as Omit<ProductRecord, 'id'>)
   }
 
@@ -162,15 +179,17 @@ export function RecordForm({ mode, record, nextIdPreview, onClose, onSubmit }: P
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+            disabled={submitting}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+            disabled={submitting}
+            className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
           >
-            {isEdit ? 'Save changes' : 'Create record'}
+            {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create record'}
           </button>
         </div>
       </form>
@@ -235,8 +254,9 @@ function FieldInput({
         <input
           {...shared}
           type={field.type === 'date' ? 'date' : field.numeric ? 'number' : 'text'}
-          step={field.type === 'currency' ? '0.01' : undefined}
+          step={field.type === 'currency' ? '0.01' : field.type === 'rating' ? '0.1' : undefined}
           min={field.numeric ? 0 : undefined}
+          max={field.type === 'rating' ? MAX_RATING : undefined}
           value={value as string}
           onChange={(e) => onChange(e.target.value)}
         />
