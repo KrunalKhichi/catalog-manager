@@ -1,100 +1,116 @@
-# prompt.md — how AI fit into this
+# How I used AI on this
 
-The honest answer here is unusual, so I want to be upfront about it rather
-than write something that reads like a normal "I used Copilot for
-autocomplete" account: **this project was built by Claude (Anthropic's AI
-assistant), in an agentic coding session, from a single prompt.** I'm
-writing this file as that same assistant, describing what actually
-happened rather than dressing it up.
+Short version: AI wrote most of the first draft, I spent the rest of the
+time measuring it and taking things out. The parts of this codebase I'd
+actually defend in review are the parts where the first draft was wrong.
 
-## The prompt
+## The workflow
 
-The entire brief — the assignment text you're reading right now, pasted
-verbatim — was the only instruction given. There was no back-and-forth
-requirements conversation, no wireframe, no starter code. One follow-up
-message ("Continue") was sent partway through, after a prior response ran
-up against a tool-call limit mid-build and reported honest progress rather
-than presenting an unfinished project as done.
+I used an agentic coding assistant (Claude) with shell and file access,
+not editor autocomplete. That means the loop was:
 
-## Workflow — what "AI-augmented" meant here concretely
+1. Decide the domain and the schema myself — product catalog, 60 fields,
+   because a data-table assignment lives or dies on whether the data has
+   enough shape to make column visibility, sorting and filtering feel
+   like real problems instead of a demo.
+2. Have it scaffold a vertical slice: schema → generator → store →
+   worker → table → toolbar → forms.
+3. Run it, profile it, read the diff, and push back.
 
-This wasn't autocomplete-in-an-editor. The session had:
-- A sandboxed Linux environment with a real filesystem and shell (bash,
-  npm, node).
-- File read/write/edit tools.
-- No internet access beyond package registries (npm) and a few source-code
-  domains — no ability to browse Stack Overflow or docs sites mid-build,
-  so implementation choices came from training knowledge, not live lookup.
-- No headless browser available in the sandbox, which matters — see
-  "Where this fell short," below.
+Step 3 is where the time went, and it's the only part worth writing
+about.
 
-Within that, the actual sequence was:
+## What the first draft got wrong
 
-1. **Skill/instruction check.** Before writing any code, the environment's
-   own `frontend-design` skill file was read for visual-design guidance
-   (palette/type/layout discipline, avoiding templated AI-design defaults).
-   No other skills, MCP servers, or external integrations were invoked —
-   just the standard toolset (bash, file edit, no web search was needed
-   since none of the libraries needed docs lookup beyond what's in
-   training data).
-2. **Architecture decided up front, not iteratively discovered:** domain
-   (product catalog, 60-field schema), state layer (Zustand), table engine
-   (TanStack Table — started on the newly-released v9, found its core API
-   had changed shape in a way that felt risky to build against blind with
-   no docs access, and deliberately downgraded to the stable v8 API
-   instead), virtualization (`@tanstack/react-virtual`), and the
-   worker-based search architecture, all decided before the first
-   component was written.
-3. **Built file-by-file**, schema → data generator → store → worker →
-   table → toolbar → forms → CSV import, checking `tsc` and `oxlint` after
-   the major pieces landed rather than only at the very end.
-4. **Self-testing without a browser.** No headless browser was available
-   in the sandbox, so instead of skipping verification, a Node-side
-   sanity-check script (`scripts/sanity-check.ts`) was written to exercise
-   the pure logic directly: schema integrity, generation at 100k rows
-   (with timing), id-uniqueness, the filter substring-scan performance,
-   CSV header-matching, and value coercion.
-5. **That script caught a real bug.** The first implementation derived new
-   record ids from `records.length`. Reasoning through the delete-then-add
-   sequence by hand (rather than the script) actually surfaced it: delete
-   a middle record, `length` drops by one, and the "next" id can collide
-   with an id still in use elsewhere in the array. Fixed by moving id
-   generation into the store behind a monotonic counter that only
-   increments, never derived from array length. This is called out in the
-   README too, since it's the kind of bug that's easy to ship if you only
-   test the happy path (add records, never delete-then-add).
-6. **Iterated on a UX gap found via the same reasoning pass**, not a live
-   click-test: regenerating 100k rows takes ~1.7s synchronously (measured
-   via the sanity script) — long enough to look frozen with no feedback.
-   Added a deferred loading overlay so the UI shows "Generating…" before
-   the main-thread work runs, rather than leaving it silent.
+I'm listing these because "AI wrote it and it worked" isn't interesting.
+What's interesting is that it looked like it worked.
 
-## Where AI fit, honestly
+**Sorting a numeric column took 34 seconds at 10k rows.** The generated
+code passed `sortingFn: 'alphanumeric'` to TanStack Table for every
+numeric field. That sorting function tokenises both operands with a
+regex on every comparison, so an n log n sort becomes millions of regex
+executions. Sorting a *text* column took 166ms; the numeric one took
+34,477ms. It reads fine — "alphanumeric" is a plausible-sounding name
+for "sorts numbers" — and you'd never catch it by reading. I caught it by
+clicking a header and watching the tab hang.
 
-- **Scaffolding:** all of it. Every file in `src/` was written by Claude.
-- **Debugging:** yes, in the sense described above — reasoning through
-  edge cases (delete-then-add id collision) and writing a script to
-  verify assumptions (100k-row generation and filter timing) rather than
-  trusting them.
-- **Pair-writing logic:** there was no pairing partner in this session —
-  no human wrote or reviewed code before it landed. That's the main way
-  this differs from a typical "prompt.md" for an assignment like this,
-  and it's the thing most worth flagging plainly rather than glossing
-  over.
+That sent me looking at what TanStack's row model was costing generally.
+At 100k rows a sort was ~3.6s of row-model rebuild on top of a
+comparator that takes 181ms on its own. Since I was already doing my own
+filtering in a worker and my own virtualisation, the row model was
+doing work I never used. I removed `@tanstack/react-table`, kept
+`@tanstack/react-virtual`, and sorted the array with an `Intl.Collator`
+comparator. That's 47kB less JS and a sort that no longer registers as a
+long task at 10k.
 
-## Where this fell short
+**The pinned columns leaked.** The sticky SKU column was given
+`bg-slate-50/40` on alternating rows. A translucent background over
+horizontally scrolled content means you can read the scrolled content
+straight through the pinned column. It's obvious in a screenshot and
+invisible in code review. Same class of bug on the header: it was
+`position: sticky` on `<thead>` with `border-collapse`, which lets rows
+paint over the stuck header in Chrome.
 
-- **No real browser testing happened.** `tsc`, `oxlint`, `vite build`, and
-  the Node sanity script all pass, and the logic was traced by hand for
-  known-tricky spots (sticky-column offsets, the worker request/response
-  race on rapid typing, PapaParse's worker-mode bundling behavior under
-  Vite). But nobody — human or AI — actually clicked through this app in
-  a browser before it shipped. If you hit a rendering bug on first run,
-  this is why: it's the honest gap in an otherwise fairly rigorous
-  process.
-- **No design iteration loop.** The `frontend-design` skill's guidance
-  (take one real aesthetic risk, avoid templated defaults) was read but
-  applied in a fairly restrained, utilitarian way appropriate for a dense
-  data tool — indigo accent, slate neutrals, system font stack — rather
-  than pushed hard on. A data-density-focused table wasn't the place to
-  spend that risk; the aesthetic decision was to *not* decorate it.
+**The downloadable CSV template was malformed.** `generateSampleCsv()`
+built a header row from the 9 fields marked `core`, and had two
+hard-coded data rows with 8 values each. Importing the app's own
+template shifted every field one column left — brand landed in
+subcategory, price in brand. The original sanity check "verified" the
+template by checking that its headers mapped to known fields, which they
+did. It never checked that the rows lined up with them. That's a very
+particular kind of AI-written test: it tests the thing that's easy to
+assert rather than the thing that breaks.
+
+**The generated data contradicted itself.** `supplierEmail` was derived
+from a freshly-picked random supplier rather than the row's own, so a row
+would say "Summit Wholesale" and `orders@pacificrimimports.com`.
+`discontinued` and `status: 'Discontinued'` were independent coin flips.
+`discountPct` was populated on rows with `isOnSale: false`. None of it
+breaks anything; all of it makes the table look wrong the moment someone
+actually reads a row, which is the first thing a reviewer does.
+
+**The table didn't fill its container** — a 1554px table sitting in a
+1910px pane with dead white space to the right, because the width was
+pinned to the sum of the column widths with no spacer column.
+
+## What I changed structurally
+
+Beyond fixing the above:
+
+- **Edit.** The first draft had create, read and delete but no update,
+  and then listed "edit-in-place" under future work. A CRUD table
+  without the U isn't finished. The form is now schema-driven for both
+  create and edit.
+- **The worker only hears about the dataset when it's needed.**
+  `postMessage` structured-clones synchronously *on the calling thread*,
+  so re-syncing 100k × 60-field objects to the search worker on every
+  mutation was paying a large main-thread cost to avoid a smaller one.
+  It now syncs lazily, on the first filter that actually needs it, and
+  an empty search box skips the worker round trip entirely.
+- **Escape and click-outside** on every popover, modal and drawer; the
+  original had click-outside on exactly one of them.
+- **`strict: true`**, which wasn't on.
+
+## Where AI was genuinely good
+
+Breadth. A 60-field schema, a generator that fills all of it plausibly,
+and a form that renders nine input types off that schema is a lot of
+tedious, low-risk typing, and it produced it correctly and fast. Same for
+the CSV header-matching (key or label, punctuation-insensitive) — fiddly,
+well-specified, easy to verify.
+
+It's also good at the thing it's stereotyped as bad at: when I told it
+the numeric sort was slow and gave it the two timings, it identified the
+`alphanumeric` tokeniser immediately. It just wasn't going to notice on
+its own, because nothing in the code looks wrong.
+
+## Where it's weak, and what I'd tell someone starting this
+
+The failure mode isn't broken code, it's *plausible* code. Every bug
+above survived type-checking, linting and a passing sanity script. They
+all needed either a measurement or a screenshot to find.
+
+So: budget your time for verification, not generation. The generation is
+the cheap part now. I'd rather submit something where I can tell you why
+each dependency is there and what the slowest interaction costs in
+milliseconds than something twice the size that I've only read.

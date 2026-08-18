@@ -1,140 +1,151 @@
-# Catalog Manager — Data Table Assignment
+# Catalog Manager
 
-A product-catalog data table for browsing 10k–100k records with up to 60
-configurable columns. React + TypeScript, built with Vite.
+A product-catalog table for browsing 10k–100k records across 60 columns.
+React 19 + TypeScript + Vite, no backend — generation, search, sorting
+and CSV parsing all happen in the browser.
 
-**Domain:** product/inventory catalog (SKU, pricing, stock, warehouse,
-supplier, logistics, merchandising fields — 60 in total).
-
-## Running it
+**Domain:** product/inventory catalog. SKU, pricing, stock, warehouse,
+supplier, logistics and merchandising fields, 60 in total.
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
-npm run build       # production build to dist/
-npm run preview     # serve the production build
-npm run lint         # oxlint
-npm run sanity-check # node-side checks for data gen / filtering / CSV mapping (see scripts/)
+npm run dev           # http://localhost:5173
+npm run build         # production build
+npm run lint          # oxlint
+npm run sanity-check  # node-side checks for generation, filtering, CSV
 ```
 
-No backend — everything (data generation, storage, search, CSV parsing)
-runs in the browser. Refreshing the page resets the dataset back to its
-generated seed state; there's no persistence layer, by design (see
-"what I'd build next").
+Everything lives in memory; a refresh regenerates the seed dataset.
 
-## What's implemented
+## What's in it
 
-- **Search / filter** — a global text search box (matches SKU, name, brand,
-  category, supplier, tags, etc.) plus a filter popover for category,
-  status, and price/stock ranges. All of it runs in a **Web Worker**
-  (`src/workers/searchWorker.ts`), debounced 120ms, so typing never blocks
-  the main thread even at 100k rows.
-- **Add a record** — a modal form generated from the field schema: ~12 core
-  fields up front, the remaining ~48 tucked under "Show advanced fields."
-  Required-field and numeric validation before submit.
-- **Bulk upload via CSV** — drag-and-drop or file picker, parsed with
-  PapaParse. Headers are matched to schema fields by name (key or label,
-  case/punctuation-insensitive), so column order in the file doesn't
-  matter and re-exported files from this same app round-trip cleanly. You
-  get a preview (matched vs. skipped columns, row count) before anything
-  is committed, plus a "download sample CSV" link.
-- **Delete** — a single-record delete lives in the row-detail panel; bulk
-  delete is checkbox selection → "Delete N selected" in the toolbar, both
-  going through the same confirm dialog.
-- **Wide-table handling (10–60 columns)** — a "Columns" panel with
-  presets (Compact 10 / Standard 20 / Wide 40 / All 60) plus per-field
-  checkboxes and a search box. Data always carries all 60 fields; only
-  *display* is restricted, so toggling columns is instant. The select
-  checkbox column and the first data column stay pinned while the rest of
-  the (potentially 9000px-wide) table scrolls horizontally, so you don't
-  lose your place. Clicking a row opens a detail panel showing every field
-  regardless of which columns are currently visible — the table is the
-  scan view, the panel is the "give me everything" view.
-- **Row virtualization** — `@tanstack/react-virtual` renders only the
-  visible slice of rows (viewport + overscan) via a windowed `<tbody>`;
-  10k or 100k rows cost roughly the same to render.
+**Search and filter.** A global search box across SKU, name, brand,
+category, supplier, tags and a few more, plus a filter popover for
+category, status and price/stock ranges. Both run in a Web Worker
+(`src/workers/searchWorker.ts`), debounced 120ms.
+
+**Sorting.** Click a header to cycle asc → desc → unsorted. Numeric
+fields compare as numbers, text through an `Intl.Collator` (so `Amber`
+and `amber` group together and `WH-EAST-2` sorts before `WH-EAST-10`).
+Empty values sort last in both directions rather than counting as zero.
+The sort runs inside a React transition, so a 100k-row re-sort doesn't
+block typing or scrolling.
+
+**60 columns.** A Columns panel with count presets (10/20/40/60),
+per-field checkboxes and a field search. Rows always carry all 60
+fields; only display is restricted, so toggling is instant. Columns are
+drag-resizable from their header edge. The checkbox column and the first
+data column stay pinned while the remaining ~8000px scrolls.
+
+**Row virtualization.** `@tanstack/react-virtual` renders only the
+visible window, so 10k and 100k cost about the same to render.
+
+**Create / edit / delete.** One schema-driven form does create and edit:
+9 core fields up front, the other 51 under "advanced", validation off the
+schema. Delete is per-row from the detail panel or bulk by checkbox
+selection, both through a confirm dialog.
+
+**CSV import and export.** Import is drag-and-drop or file picker, parsed
+with PapaParse in its own worker, with a preview of which headers matched
+which fields before anything commits. Headers match on key *or* label,
+case- and punctuation-insensitively, so `stockQty`, `Stock Qty` and
+`stock_qty` all land in the same column. Export writes the current
+filtered rows with the currently visible columns.
+
+**Detail panel.** Clicking a row shows all 60 fields regardless of which
+columns are on, with empty fields collapsed behind a toggle. The table is
+the scan view; this is the "give me everything" view.
+
+## Measured numbers
+
+Chrome on this machine, taken from `PerformanceObserver` long-task
+entries rather than estimated:
+
+| | |
+|---|---|
+| Sort any column, 10k rows, 60 columns | no long task recorded |
+| Sort any column, 100k rows, 60 columns | ~720ms, inside a transition |
+| Regenerate to 100k, 11 columns | ~1,040ms, behind a progress overlay |
+| Regenerate to 100k, 60 columns | ~2,370ms, behind a progress overlay |
+| Substring scan over 100k rows (worker) | ~8ms |
+
+The regenerate figures are the honest weak spot: generation itself is
+~700ms and the rest is React committing a fresh 100k-row table. It's a
+deliberate blocking operation with an overlay in front of it rather than
+something I hid.
+
+For contrast, sorting a numeric column at 10k took **34.5 seconds**
+before I profiled it. See `prompt.md`.
 
 ## The decision I'm least sure about
 
-Running filtering in a **Web Worker** with a synced copy of the dataset,
-rather than just filtering in the main thread with `useMemo`.
+Running search and filtering in a **Web Worker** instead of a `useMemo`
+on the main thread.
 
-At 100k rows, a plain substring scan across a handful of fields turns out
-to be fast — under 15ms in my own timing (see `npm run sanity-check`).
-That's well inside "invisible to the user" territory even without a
-worker. So the worker is arguably solving a problem that, at this scale,
-doesn't really bite yet — and it costs real complexity: a second copy of
-the dataset that has to be kept in sync on every add/delete/import, a
-debounce + request-id scheme to avoid stale results overwriting fresh
-ones, and one more moving part that can silently break in a way that's
-hard to unit test outside a browser.
+A full substring scan over 100k rows takes about 8ms
+(`npm run sanity-check` prints it). That's already invisible, so the
+worker isn't solving a problem I can currently observe — and it costs a
+second copy of the dataset, a sync path, a debounce, and request-id
+bookkeeping so a stale result can't overwrite a fresh one.
 
-The alternative I rejected was: keep filtering on the main thread, memoize
-against `[records, searchQuery, filters]`, and lean on debouncing alone
-for responsiveness. That's less code, easier to reason about, and would
-have been completely fine for the stated 10k–100k range.
+What made me keep it is that the sync cost is the interesting part, and I
+only understood it after building it. `postMessage` structured-clones
+synchronously *on the calling thread*, so the naive version — re-sync the
+full dataset on every add, delete and import — was spending more
+main-thread time on the clone than the filter would ever have cost. The
+fix was to sync lazily: the worker doesn't hear about the dataset until a
+filter actually needs it, and an empty search box skips the round trip
+entirely. So the worker is now genuinely free when unused.
 
-I kept the worker because the assignment explicitly frames this as a
-scale problem ("data-intensive design" is a named evaluation axis, and
-the README asks what breaks at 10x). A worker is the version of this
-that doesn't need to be revisited if the dataset grows or the filter
-logic gets heavier (fuzzy matching, multi-field scoring, etc.) — but I
-want to be honest that for the dataset sizes actually in front of a user
-today, this is defensible engineering-for-headroom more than a fix for
-an observed problem, and a reviewer could reasonably prefer the simpler
-version.
+A reviewer could reasonably say the main-thread version is the right call
+at this scale, and they'd be right on today's numbers. I'd defend the
+worker as the version that doesn't need revisiting when the filter gets
+heavier (fuzzy matching, multi-field scoring) rather than as a fix for an
+observed stall.
 
-## What breaks first at 10x (i.e. ~1M rows)
+## What breaks first at 10x (~1M rows)
 
-Roughly in this order:
+1. **Memory.** 1M rows × 60 fields as JS objects, held on the main thread
+   and again in the worker once a filter runs. Several hundred MB. This
+   is the ceiling, not CPU.
+2. **The full worker sync.** Lazy sync avoids paying it repeatedly, but
+   the first search after a mutation still clones the whole dataset. At
+   1M that's a visible stall. The fix is delta sync: send added/removed
+   ids and patch the worker's copy in place.
+3. **Sorting.** ~720ms at 100k, so somewhere around 8s at 1M. A React
+   transition hides latency but doesn't remove it. I'd move the sort into
+   the worker next to the filter, since it already holds the data.
+4. **Generation.** ~700ms at 100k, so ~7s at 1M, entirely blocking. It
+   would have to move into the worker or be chunked across frames.
+5. **Holding it in the browser at all.** Past a few million rows this
+   stops being a client-side data-modelling problem and becomes
+   cursor-based pagination against a server. That's an architecture
+   change rather than a tuning pass, which is why it's last.
 
-1. **Client memory.** 1M rows × 60 fields as JS objects, held twice (main
-   thread + worker copy) is a genuinely large heap footprint — likely
-   several hundred MB. This is the first real ceiling, not CPU.
-2. **The full-replace worker sync.** Every add/delete/CSV import currently
-   re-sends the *entire* records array to the worker (`postMessage({type:
-   'sync', records})`). Structured-cloning 1M objects on every mutation
-   gets expensive and janky. I'd switch to incremental sync (send only
-   the delta — added/removed ids — and patch the worker's copy in place)
-   instead of a full resend.
-3. **Sorting.** `getSortedRowModel()` re-sorts the *entire* filtered set
-   on every sort-column click. At 100k that's imperceptible; at 1M,
-   `Array.prototype.sort` with a real comparator starts to show up as a
-   visible stall. I'd move sorting into the worker alongside filtering
-   (same dataset copy, same reasoning), or paginate/virtualize the sort
-   itself so we only ever fully order what's visible plus a buffer.
-4. **CSV import.** Parsing is already off the main thread (PapaParse
-   `worker: true`), but `bulkAddRecords` still does one big array-spread
-   `[...newRecords, ...state.records]` and a full worker re-sync
-   afterward — same delta-sync fix as #2 would apply here too.
-5. **Eventually, "hold it all in the browser" itself.** Past a few
-   million rows this stops being a client-side data-modeling problem and
-   becomes a pagination/virtual-scroll-against-a-server problem — real
-   backend with cursor-based pagination and server-side filtering,
-   fetching windows of rows as the user scrolls instead of holding the
-   full set in memory. That's a genuine architecture change, not a
-   tuning pass, which is why it's last on this list rather than first.
+## What I'd do next
 
-## What I'd build next with more time
+- **Undo for delete.** A "Deleted 12 records · Undo" toast holding the
+  rows for a few seconds would be safer than the confirm dialog *and*
+  let me drop the dialog.
+- **Column reordering.** Visibility and resizing are covered; drag-to-
+  reorder isn't, and on a 60-column table that's a real gap.
+- **Multi-column sort** (shift-click for a secondary key).
+- **Persistence.** IndexedDB would survive a reload without a backend.
+- **Delta worker sync**, per point 2 above — the highest-leverage change
+  if the dataset grows.
 
-- **Column reordering & resizing** (drag-and-drop headers, persisted).
-  Visibility is covered; reordering isn't, and on a 60-column table
-  that's a real gap.
-- **Undo for delete.** Right now delete goes through a confirm dialog and
-  that's it. A "Deleted 12 records · Undo" toast (keep the removed rows
-  in memory for ~5s before they're really gone) would remove the need for
-  the confirm dialog *and* be safer.
-- **Edit-in-place.** You can add and delete, but not edit an existing
-  record without deleting and re-adding it. A double-click-to-edit cell,
-  or an "Edit" action on the detail panel, is the obvious next feature.
-- **Persistence.** Everything currently lives in memory and resets on
-  reload. IndexedDB (still fully client-side, no backend needed) would
-  make the dataset durable across sessions with a moderate amount of
-  added complexity.
-- **CSV export** of the current filtered view, not just import — a
-  natural companion to the import feature that I didn't have time for.
-- **Multi-field sort** (shift-click to add a secondary sort key), which
-  `@tanstack/react-table` mostly gives me for free but I didn't wire up
-  the UI for.
-- **Delta-based worker sync**, described above under "what breaks at
-  10x" — the highest-leverage perf change if the dataset size grows.
+## Notes on structure
+
+```
+src/
+  data/schema.ts        60 field definitions — the single source of truth
+  data/generateData.ts  seeded PRNG generator
+  store/useTableStore.ts  zustand: records, selection, filters, columns
+  hooks/useFilteredRecords.ts  worker orchestration + debounce
+  workers/searchWorker.ts      the scan itself
+  components/DataTable/        virtualized table, sorting, resizing
+```
+
+`schema.ts` drives the generator, the columns, the form inputs, CSV
+header matching and the detail panel. Adding a 61st field means adding
+one entry there and nothing else.

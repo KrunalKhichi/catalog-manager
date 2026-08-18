@@ -1,14 +1,14 @@
+import Papa from 'papaparse'
 import { FIELD_SCHEMA } from '../data/schema'
-import type { FieldDef } from '../types'
+import type { FieldDef, ProductRecord } from '../types'
 
 function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
-// Every field can be matched by its schema key OR its human label
-// ("stockQty" or "Stock Qty" both resolve), so hand-authored CSVs work
-// as naturally as ones exported from this same app.
-const HEADER_LOOKUP: Map<string, FieldDef> = new Map()
+// A field matches either its schema key or its human label, so "stockQty",
+// "Stock Qty" and "stock_qty" all land on the same column.
+const HEADER_LOOKUP = new Map<string, FieldDef>()
 for (const field of FIELD_SCHEMA) {
   HEADER_LOOKUP.set(normalize(field.key), field)
   HEADER_LOOKUP.set(normalize(field.label), field)
@@ -20,12 +20,19 @@ export interface HeaderMapping {
 }
 
 export function mapHeaders(headers: string[]): HeaderMapping {
-  const matched: { header: string; field: FieldDef }[] = []
+  const matched: HeaderMapping['matched'] = []
   const unmatched: string[] = []
+  const seen = new Set<string>()
   for (const header of headers) {
     const field = HEADER_LOOKUP.get(normalize(header))
-    if (field) matched.push({ header, field })
-    else unmatched.push(header)
+    // Two headers can normalise to the same field ("SKU" and "sku"); the
+    // second would silently overwrite the first, so skip it instead.
+    if (field && !seen.has(field.key)) {
+      seen.add(field.key)
+      matched.push({ header, field })
+    } else {
+      unmatched.push(header)
+    }
   }
   return { matched, unmatched }
 }
@@ -38,7 +45,7 @@ export function coerceValue(field: FieldDef, raw: string | undefined | null): st
     case 'currency':
     case 'rating': {
       const n = Number(trimmed)
-      return Number.isNaN(n) ? null : n
+      return Number.isFinite(n) ? n : null
     }
     case 'boolean':
       return ['true', 'yes', '1', 'y'].includes(trimmed.toLowerCase())
@@ -47,25 +54,40 @@ export function coerceValue(field: FieldDef, raw: string | undefined | null): st
   }
 }
 
-export function generateSampleCsv(): string {
-  const fields = FIELD_SCHEMA.filter((f) => f.core)
-  const header = fields.map((f) => f.key).join(',')
-  const sampleRows = [
-    ['SKU-SAMPLE01', 'Nova Trainer 12', 'Footwear', 'Kestrel', '89.99', '240', 'Black', 'Active'],
-    ['SKU-SAMPLE02', 'Aero Backpack 44', 'Apparel', 'Vantage', '54.50', '95', 'Navy', 'Draft'],
-  ]
-  const lines = sampleRows.map((row) => row.join(','))
-  return [header, ...lines].join('\n')
+const SAMPLE_VALUES: Record<string, [string, string]> = {
+  sku: ['SKU-FTW-004821', 'SKU-APP-011307'],
+  name: ['Nova Trainer Low', 'Aero Shell Jacket'],
+  category: ['Footwear', 'Apparel'],
+  subcategory: ['Sneakers', 'Jackets'],
+  brand: ['Kestrel', 'Vantage'],
+  price: ['89.99', '154.50'],
+  stockQty: ['240', '95'],
+  color: ['Black', 'Navy'],
+  status: ['Active', 'Draft'],
 }
 
-export function downloadTextFile(filename: string, content: string, mime = 'text/csv') {
-  const blob = new Blob([content], { type: mime })
-  const url = URL.createObjectURL(blob)
+/** Template CSV: one column per core field, so it round-trips through the importer. */
+export function generateSampleCsv(): string {
+  const fields = FIELD_SCHEMA.filter((f) => f.core)
+  const rows = [0, 1].map((i) =>
+    Object.fromEntries(fields.map((f) => [f.key, SAMPLE_VALUES[f.key]?.[i] ?? ''])),
+  )
+  return Papa.unparse(rows, { columns: fields.map((f) => f.key) })
+}
+
+/** Exports the rows currently on screen, with only the columns currently shown. */
+export function recordsToCsv(records: ProductRecord[], keys: string[]): string {
+  return Papa.unparse(
+    records.map((r) => Object.fromEntries(keys.map((k) => [k, r[k] ?? '']))),
+    { columns: keys },
+  )
+}
+
+export function downloadTextFile(filename: string, content: string, mime = 'text/csv;charset=utf-8') {
+  const url = URL.createObjectURL(new Blob([content], { type: mime }))
   const a = document.createElement('a')
   a.href = url
   a.download = filename
-  document.body.appendChild(a)
   a.click()
-  document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }

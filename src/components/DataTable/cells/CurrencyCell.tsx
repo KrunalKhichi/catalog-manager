@@ -1,5 +1,5 @@
-const formatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
+import { currency } from '../../../utils/format'
 
 export function CurrencyCell({ value }: { value: number }) {
-  return <span className="tabular-nums">{formatter.format(value)}</span>
+  return <span className="tabular-nums">{currency.format(value)}</span>
 }

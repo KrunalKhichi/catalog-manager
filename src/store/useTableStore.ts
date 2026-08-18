@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { ProductRecord } from '../types'
-import { FIELD_SCHEMA } from '../data/schema'
+import { DEFAULT_VISIBLE } from '../data/schema'
 import { generateRecords, nextId } from '../data/generateData'
 
 export interface ColumnFilters {
@@ -29,11 +29,8 @@ interface TableState {
   visibleColumns: string[]
   datasetSize: number
   /**
-   * Monotonically increasing counter used to mint new record ids. Deriving
-   * ids from `records.length` looks fine until you delete a row and then
-   * add one — the length shrinks and the "new" id can collide with an id
-   * still in use. This counter only ever goes up, including across
-   * deletes, so ids stay unique for the life of the session.
+   * Ids come from here, never from `records.length` — length shrinks on
+   * delete and the next "new" id would collide with one still in use.
    */
   recordSeq: number
   lastToast: { id: number; message: string; tone: 'success' | 'error' } | null
@@ -41,6 +38,7 @@ interface TableState {
   regenerateDataset: (count: number) => void
   addRecord: (partial: Omit<ProductRecord, 'id'>) => ProductRecord
   bulkAddRecords: (partials: Omit<ProductRecord, 'id'>[]) => number
+  updateRecord: (id: string, patch: Omit<ProductRecord, 'id'>) => ProductRecord | null
   deleteRecords: (ids: string[]) => void
   toggleSelected: (id: string) => void
   setSelected: (ids: string[]) => void
@@ -53,8 +51,7 @@ interface TableState {
   notify: (message: string, tone?: 'success' | 'error') => void
 }
 
-const DEFAULT_VISIBLE = FIELD_SCHEMA.filter((f) => f.defaultVisible).map((f) => f.key)
-const INITIAL_SIZE = 10000
+const INITIAL_SIZE = 10_000
 
 export const useTableStore = create<TableState>((set, get) => ({
   records: generateRecords(INITIAL_SIZE),
@@ -74,18 +71,32 @@ export const useTableStore = create<TableState>((set, get) => ({
       recordSeq: count,
     }),
 
+  // `id` last: a CSV column called "id" must not be able to overwrite the
+  // one we just minted.
   addRecord: (partial) => {
     const seq = get().recordSeq
-    const record: ProductRecord = { id: nextId(seq), ...partial }
+    const record: ProductRecord = { ...partial, id: nextId(seq) }
     set((state) => ({ records: [record, ...state.records], recordSeq: seq + 1 }))
     return record
   },
 
   bulkAddRecords: (partials) => {
     const startSeq = get().recordSeq
-    const withIds: ProductRecord[] = partials.map((p, i) => ({ id: nextId(startSeq + i), ...p }))
+    const withIds: ProductRecord[] = partials.map((p, i) => ({ ...p, id: nextId(startSeq + i) }))
     set((state) => ({ records: [...withIds, ...state.records], recordSeq: startSeq + partials.length }))
     return withIds.length
+  },
+
+  updateRecord: (id, patch) => {
+    const index = get().records.findIndex((r) => r.id === id)
+    if (index === -1) return null
+    const updated: ProductRecord = { ...patch, id }
+    set((state) => {
+      const records = state.records.slice()
+      records[index] = updated
+      return { records }
+    })
+    return updated
   },
 
   deleteRecords: (ids) => {
@@ -127,5 +138,5 @@ export const useTableStore = create<TableState>((set, get) => ({
     }),
 
   notify: (message, tone = 'success') =>
-    set({ lastToast: { id: Date.now() + Math.random(), message, tone } }),
+    set((state) => ({ lastToast: { id: (state.lastToast?.id ?? 0) + 1, message, tone } })),
 }))

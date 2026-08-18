@@ -80,12 +80,12 @@ export const ENUM_OPTIONS = {
 }
 
 /**
- * The full 60-field schema. `defaultVisible` picks a sane starting set of
- * ~16 columns; `core` marks the dozen fields that show up in the compact
- * add-record form (everything else lives under "Advanced fields").
+ * One list drives everything: generated data, table columns, the add/edit
+ * form, CSV header matching and the detail panel. `defaultVisible` is the
+ * starting column set, `core` is what the form shows before "advanced".
  */
 export const FIELD_SCHEMA: FieldDef[] = [
-  { key: 'sku', label: 'SKU', type: 'text', width: 130, defaultVisible: true, core: true, required: true },
+  { key: 'sku', label: 'SKU', type: 'text', width: 158, defaultVisible: true, core: true, required: true },
   { key: 'name', label: 'Product Name', type: 'text', width: 240, defaultVisible: true, core: true, required: true },
   { key: 'category', label: 'Category', type: 'enum', options: CATEGORIES, width: 150, defaultVisible: true, core: true, required: true },
   { key: 'subcategory', label: 'Subcategory', type: 'enum', options: SUBCATEGORIES, width: 150, defaultVisible: false, core: true },
@@ -151,11 +151,12 @@ export const FIELD_MAP: Record<string, FieldDef> = Object.fromEntries(
   FIELD_SCHEMA.map((f) => [f.key, f]),
 )
 
-// Used by column-count presets: the fields most useful for a quick glance
-// come first (mirrors defaultVisible), then the rest in schema order. This
-// keeps "Compact (10)" showing sensible fields instead of an arbitrary
-// prefix of the full 60-field schema.
+export const DEFAULT_VISIBLE: string[] = FIELD_SCHEMA.filter((f) => f.defaultVisible).map((f) => f.key)
+
+// Column-count presets take a prefix of this list, so the useful-at-a-glance
+// fields have to come first — otherwise "Compact (10)" shows whatever
+// happens to sit at the top of the schema.
 export const COLUMN_PRIORITY: string[] = [
-  ...FIELD_SCHEMA.filter((f) => f.defaultVisible).map((f) => f.key),
+  ...DEFAULT_VISIBLE,
   ...FIELD_SCHEMA.filter((f) => !f.defaultVisible).map((f) => f.key),
 ]

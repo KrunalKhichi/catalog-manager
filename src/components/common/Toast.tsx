@@ -1,27 +1,29 @@
 import { useEffect, useState } from 'react'
 import { useTableStore } from '../../store/useTableStore'
 
+const VISIBLE_MS = 2600
+
 export function Toast() {
-  const lastToast = useTableStore((s) => s.lastToast)
-  const [visible, setVisible] = useState(false)
+  const toast = useTableStore((s) => s.lastToast)
+  const [shownId, setShownId] = useState<number | null>(null)
 
   useEffect(() => {
-    if (!lastToast) return
-    setVisible(true)
-    const t = setTimeout(() => setVisible(false), 2600)
-    return () => clearTimeout(t)
-  }, [lastToast])
+    if (!toast) return
+    setShownId(toast.id)
+    const timer = setTimeout(() => setShownId(null), VISIBLE_MS)
+    return () => clearTimeout(timer)
+  }, [toast])
 
-  if (!lastToast || !visible) return null
+  if (!toast || shownId !== toast.id) return null
 
   return (
-    <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50">
+    <div role="status" aria-live="polite" className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2">
       <div
-        className={`px-4 py-2 rounded-lg shadow-lg text-sm font-medium text-white ${
-          lastToast.tone === 'error' ? 'bg-rose-600' : 'bg-slate-900'
+        className={`rounded-lg px-4 py-2 text-sm font-medium text-white shadow-lg ${
+          toast.tone === 'error' ? 'bg-rose-600' : 'bg-slate-900'
         }`}
       >
-        {lastToast.message}
+        {toast.message}
       </div>
     </div>
   )
